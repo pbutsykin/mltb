@@ -1,6 +1,47 @@
-import requests, sys, json, asyncio, logging
+import requests, sys, os, json, asyncio, logging
 
 logger = logging.getLogger('mltb')
+
+class PerState:
+    def __init__(self, spath = os.path.expanduser("~/.mltb/state.json")):
+        self.spath = spath
+        self.__state = {}
+
+        if not os.path.exists(os.path.dirname(spath)):
+            os.mkdir(os.path.dirname(spath))
+
+        if os.path.isfile(spath):
+            with open(spath) as sfile:
+                self.__state = json.load(sfile)
+
+    def __update(self):
+        with open(self.spath, 'w+') as sfile:
+            json.dump(self.__state, sfile)
+
+    def subscribe_dev_list(self):
+        if self.__state.get("subscribe_dev_list", None):
+            return (self.__state["subscribe_dev_list"]["cmd"],
+                    self.__state["subscribe_dev_list"]["list"])
+        else:
+            return None, []
+
+    def subscribe_dev_add(self, item):
+        cmd, uid = item
+        if not self.__state.get("subscribe_dev_list", None):
+            self.__state["subscribe_dev_list"] = {"cmd": cmd, "list": []}
+
+        if uid not in self.__state["subscribe_dev_list"]["list"]:
+            self.__state["subscribe_dev_list"]["list"].append(uid)
+            self.__update()
+
+    def subscribe_dev_del(self, item):
+        __, uid = item
+        if not self.__state.get("subscribe_dev_list", None):
+            return
+
+        if uid in self.__state["subscribe_dev_list"]["list"]:
+            self.__state["subscribe_dev_list"]["list"].remove(uid)
+            self.__update()
 
 class Notify:
     def __init__(self):
@@ -34,6 +75,10 @@ class NotifyReader:
 
 async def opt_await_call(call, args):
     return await call(*args) if asyncio.iscoroutinefunction(call) else call(*args)
+
+class Obj:
+    def __init__(self, **entries):
+        self.__dict__.update(entries)
 
 class NetDevs:
     def __init__(self, devs, translation = {}):
@@ -143,6 +188,7 @@ class Telegram:
         self.__handlers = {}
         self.descs = []
         self.user_white_list = access_list
+        self.pstate = PerState()
 
         for names, call, desc in cmd_list:
             self.__handlers.update({name:call for name in names})
@@ -185,6 +231,27 @@ class Telegram:
             'text': answer,
         }).json()
         return resp
+
+    def __unwind_subscribe_list(self, notify, opts, cmd_ctx):
+        cmd_value, id_list = cmd_ctx
+        for user_id in id_list:
+            user_name = self.__get_chat(user_id, extract_field = "first_name")
+            if user_name not in self.user_white_list:
+                continue;
+            #TODO Add check for cmd type to prevent run arbitrary TelegramCommand
+            cmd = Obj(**{"value": cmd_value, "user_id": user_id})
+            if not (handler := self.__handlers.get(cmd.value)):
+                logger.debug(f"Unknown command: {cmd.value}")
+                continue
+            logger.debug(f"Load - cmd: {cmd_value}, user: {user_name}, user_id: {user_id}")
+            handler(cmd, (None, notify, self, None, ))
+
+    def __async_load_pstate(self, args):
+        notify, opts = args
+        self.__unwind_subscribe_list(notify, opts, self.pstate.subscribe_dev_list())
+
+    async def load_pstate(self, notify, opts):
+        await self.__loop.run_in_executor(None, self.__async_load_pstate, (notify, opts,))
 
     async def response(self, chat_id, answer):
         return await self.__loop.run_in_executor(None, self.__async_response, (chat_id, answer,))
@@ -245,12 +312,14 @@ class TelegramCommands:
     def register_dev_list_handler(cls, cmd, ctx):
         _, notify, tlg, __= ctx
         notify.register(cls.reponse_changed_devices, (tlg, cmd.user_id,))
+        tlg.pstate.subscribe_dev_add((cmd.value, cmd.user_id, ))
         return "notification registered"
 
     @classmethod
     def unregister_dev_list_handler(cls, cmd, ctx):
         _, notify, tlg, __ = ctx
         notify.unregister(cls.reponse_changed_devices, (tlg, cmd.user_id,))
+        tlg.pstate.subscribe_dev_del((cmd.value, cmd.user_id, ))
         return "notification unregistered"
 
     @staticmethod
@@ -260,7 +329,7 @@ class TelegramCommands:
 
     @classmethod
     def list(cls):
-        return [
+        return [ #TODO add command type flag
             (["d", "devices"], cls.get_dev_handler, "d, devices - Get current devices list"),
             (["r", "register"], cls.register_dev_list_handler, "r, register - Register device changes notification"),
             (["u", "unregister"], cls.unregister_dev_list_handler, "u, unregister - Unregister device changes notification"),
@@ -272,6 +341,7 @@ async def telega(loop, notify, opts):
     tlg = Telegram(loop, opts.token,
                    cmd_list = TelegramCommands.list(),
                    access_list = opts.access_list)
+    await tlg.load_pstate(notify, opts)
     while (True):
         for cmd in await tlg.commands(timeout = 60*5):
             logger.debug(f"<< IN message from {cmd.user_name}:\n{cmd.value}")
