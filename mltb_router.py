@@ -148,13 +148,9 @@ class Telegram:
             self.__handlers.update({name:call for name in names})
             self.descs += [desc]
 
-    def __messages(self, timeout):
-        params = {'timeout': timeout,
-                  'offset': self.__offs,
-                  'allowed_updates': ["message"],
-        }
+    def __request_get(self, url, params):
         try:
-            resp = requests.get(self.__url_get, params).json()
+            resp = requests.get(url, params).json()
         except requests.exceptions.RequestException as e:
             logger.error(e)
             return []
@@ -163,6 +159,13 @@ class Telegram:
             logger.error(f"Wrong response: {resp}")
             return []
         return resp["result"]
+
+    def __messages(self, timeout):
+        params = {'timeout': timeout,
+                  'offset': self.__offs,
+                  'allowed_updates': ["message"],
+        }
+        return self.__request_get(self.__url_get, params)
 
     def __async_commands(self, timeout):
         return map(lambda it: self.Command(it["message"], it["update_id"]), self.__messages(timeout))
