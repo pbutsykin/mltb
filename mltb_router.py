@@ -75,13 +75,13 @@ class Router:
             return resp["output"]
 
         logger.error("Bad response: " + resp["result"])
-        return []
+        return {}
 
     def __all_registered_devs(self):
-        return self.__request("/devicelist/GetDevices")["devices"]
+        return self.__request("/devicelist/GetDevices").get("devices", None)
 
     def __online_macs(self):
-        for m in self.__request("/networkconnections/GetNetworkConnections")["connections"]:
+        for m in self.__request("/networkconnections/GetNetworkConnections").get("connections", []):
             yield m["macAddress"]
 
     def __dev_filter(self, devs, flist, key = lambda x:x):
@@ -89,7 +89,11 @@ class Router:
 
     def __online_devs(self,
             mac = lambda d: d["connections"][0]["macAddress"] if d.get("connections") else None):
-        return self.__dev_filter(self.__all_registered_devs(), list(self.__online_macs()), key = mac)
+        if not (all_devs := self.__all_registered_devs()):
+            return None
+        if not (online_macs := list(self.__online_macs())):
+            return None
+        return self.__dev_filter(all_devs, online_macs, key = mac)
 
     async def online_devs(self):
         return await self.loop.run_in_executor(None, self.__online_devs)
@@ -103,7 +107,7 @@ async def router(loop, notify, opts, period_time = 3):
         await asyncio.sleep(period_time)
 
         if not (devs := await rt.online_devs()):
-            logger.error("Unexpected error: devs is empty")
+            logger.error("Unexpected error: devs info is not available")
             continue
 
         if prev_devs.info() == devs.info():
