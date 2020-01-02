@@ -160,7 +160,7 @@ class Telegram:
             return []
 
         if not resp.get("ok", False):
-            logger.error("Wrong response: %s"%resp)
+            logger.error(f"Wrong response: {resp}")
             return []
         return resp["result"]
 
@@ -184,12 +184,12 @@ class Telegram:
     async def command_response(self, cmd, result):
         resp = await self.response(cmd.user_id, result)
         if not resp["ok"]:
-            logger.error("Something wrong with cmd response to: %s, resp: %s" % (cmd.user_name, resp))
+            logger.error(f"Something wrong with cmd response to: {cmd.user_name}, resp: {resp}")
         self.__offs = cmd.offs + 1
 
     async def command_handler(self, cmd, notify, opts):
         if self.user_white_list and (cmd.user_name not in self.user_white_list):
-            logger.warning("Access denied: ", cmd.value, cmd.offs)
+            logger.warning(f"Access denied: {cmd.value} {cmd.offs}")
             return "Access denied"
         if not (handler := self.__handlers.get(cmd.value)):
             logger.debug(f"Unknown command: {cmd.value} offs:{cmd.offs}")
