@@ -135,9 +135,9 @@ class Telegram:
             self.value = msg["text"].lower()
 
     def __init__(self, loop, token, cmd_list, access_list):
-        url = "https://api.telegram.org/bot%s/" % token
-        self.__url_get = url + "GetUpdates"
-        self.__url_send = url + "sendMessage"
+        self.__url_base = "https://api.telegram.org/bot%s/" % token
+        self.__url_get = self.__url_base + "GetUpdates"
+        self.__url_send = self.__url_base + "sendMessage"
         self.__loop = loop
         self.__offs = None
         self.__handlers = {}
@@ -166,6 +166,11 @@ class Telegram:
                   'allowed_updates': ["message"],
         }
         return self.__request_get(self.__url_get, params)
+
+    def __get_chat(self, chat_id, extract_field = None):
+        if not (chat_info := self.__request_get(self.__url_base + "getChat", {'chat_id': chat_id})):
+            return {}
+        return chat_info.get(extract_field, {}) if extract_field else chat_info
 
     def __async_commands(self, timeout):
         return map(lambda it: self.Command(it["message"], it["update_id"]), self.__messages(timeout))
