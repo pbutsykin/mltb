@@ -115,7 +115,12 @@ class Router:
         headers = {
             "X-JNAP-Action": "http://linksys.com/jnap" + action,
         }
-        resp = requests.post(self.url, data=json.dumps({}), headers=headers).json()
+        try:
+            resp = requests.post(self.url, data=json.dumps({}), headers=headers).json()
+        except requests.exceptions.RequestException as e:
+            logger.error(e)
+            return {}
+
         if resp["result"] == "OK":
             return resp["output"]
 
@@ -168,9 +173,11 @@ async def router(loop, notify, opts, period_time = 3):
 class Telegram:
 
     class Command:
-        def __init__(self, msg, offs):
+        def __init__(self, it):
             from datetime import datetime
-            self.offs = offs
+            self.offs = it["update_id"]
+
+            msg = it.get("message", it.get("edited_message", None))
             self.user_id = msg["from"]["id"]
             self.bot = msg["from"]["is_bot"]
             self.user_name = msg["from"]["first_name"]
@@ -219,17 +226,22 @@ class Telegram:
         return chat_info.get(extract_field, {}) if extract_field else chat_info
 
     def __async_commands(self, timeout):
-        return map(lambda it: self.Command(it["message"], it["update_id"]), self.__messages(timeout))
+        return map(lambda it: self.Command(it), self.__messages(timeout))
 
     async def commands(self, timeout = 30):
         return await self.__loop.run_in_executor(None, self.__async_commands, timeout)
 
     def __async_response(self, args):
         user_id, answer = args
-        resp = requests.post(self.__url_send, {
-            'chat_id': user_id,
-            'text': answer,
-        }).json()
+        try:
+            resp = requests.post(self.__url_send, {
+                'chat_id': user_id,
+                'text': answer,
+            }).json()
+        except requests.exceptions.RequestException as e:
+            logger.error(e)
+            return []
+
         return resp
 
     def __unwind_subscribe_list(self, notify, opts, cmd_ctx):
@@ -258,7 +270,7 @@ class Telegram:
 
     async def command_response(self, cmd, result):
         resp = await self.response(cmd.user_id, result)
-        if not resp["ok"]:
+        if not resp.get("ok", False):
             logger.error(f"Something wrong with cmd response to: {cmd.user_name}, resp: {resp}")
         self.__offs = cmd.offs + 1
 
